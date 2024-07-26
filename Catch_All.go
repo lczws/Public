@@ -3,33 +3,47 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"compress/zlib"
 	"context"
 	"flag"
 	"fmt"
+	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"io"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"time"
 )
 
+type readCloser struct {
+    *brotli.Reader
+    io.Closer
+}
+
+func newReadCloser(r io.Reader) (io.ReadCloser, error) {
+    br  := brotli.NewReader(r)
+
+    return &readCloser{Reader: br, Closer: r.(io.Closer)}, nil
+}
+
 func main() {
 	var random_int int
 
 	flag.IntVar(&random_int, "l", 10, "random int long")
 
+	gin.SetMode(gin.ReleaseMode)
 	// 创建一个默认的路由引擎
 	r := gin.Default()
-
 	r.Any("/", func(c *gin.Context) {
 		randomString := randomString(random_int)
 		c.Redirect(http.StatusFound, "/"+randomString)
 	})
 	// 连接到 MongoDB
-	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI("***"))
+	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI("****"))
 	if err != nil {
 		fmt.Println("MongoDB connection error:", err)
 		return
@@ -92,29 +106,42 @@ func main() {
 			}
 			defer response.Body.Close()
 
-			var respBody []byte
-			if response.Header.Get("Content-Encoding") == "gzip" {
-				gz, err := gzip.NewReader(response.Body)
+			var reader io.ReadCloser
+			switch response.Header.Get("Content-Encoding") {
+			case "gzip":
+				reader, err = gzip.NewReader(response.Body)
 				if err != nil {
-					c.String(http.StatusInternalServerError, "Error decompressing gzip response")
+					fmt.Println("Error:", err)
 					return
 				}
-				defer gz.Close()
-				respBody, err = ioutil.ReadAll(gz)
+				defer reader.Close()
+			case "deflate":
+				reader, err = zlib.NewReader(response.Body)
 				if err != nil {
-					c.String(http.StatusInternalServerError, "Error reading decompressed response body")
+					fmt.Println("Error:", err)
 					return
 				}
-			} else {
-				respBody, err = ioutil.ReadAll(response.Body)
+				defer reader.Close()
+			case "br":
+				reader, err := newReadCloser(response.Body)
 				if err != nil {
-					c.String(http.StatusInternalServerError, "Error reading response body")
+					fmt.Println("Error:", err)
 					return
 				}
+				defer reader.Close()
+			default:
+				reader = response.Body
+			}
+
+			respBody, err := io.ReadAll(reader)
+			if err != nil {
+				fmt.Println("Error:", err)
+				return
 			}
 
 			// 返回转发后的响应
-			c.Data(response.StatusCode, response.Header.Get("Content-Type"), respBody)
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(http.StatusOK, string(respBody))
 
 			// 记录请求和响应
 			doc := bson.M{
@@ -124,7 +151,7 @@ func main() {
 				"headers":   headers,
 				"clientIP":  clientIP,
 				"targetUrl": targetUrl,
-				"response":  string(respBody),
+				"response":  respBody,
 				"createdAt": time.Now(),
 			}
 
@@ -165,6 +192,8 @@ func main() {
 				"IP":      clientIP,
 				"headers": headers,
 				"body":    string(body),
+				"method":  method,
+				"time":    time.Now(),
 			})
 		}
 	})
