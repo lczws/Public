@@ -18,6 +18,10 @@ func main() {
 
 	flag.IntVar(&random_int, "l", 10, "random int long")
 
+	var dburl string
+
+	flag.StringVar(&dburl, "db", "", "MongoDB URL")
+
 	// 创建一个默认的路由引擎
 	r := gin.Default()
 
@@ -26,7 +30,7 @@ func main() {
 		c.Redirect(http.StatusFound, "/"+randomString)
 	})
 	// 连接到 MongoDB
-	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI("mongodb+srv://*****/"))
+	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(dburl))
 	if err != nil {
 		fmt.Println("MongoDB connection error:", err)
 		return
