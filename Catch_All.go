@@ -29,7 +29,7 @@ func main() {
 		c.Redirect(http.StatusFound, "/"+randomString)
 	})
 	// 连接到 MongoDB
-	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI("mongodb+srv://114514:7d1LqBoj3ZTxBSi9@test-0.iiuxlda.mongodb.net/"))
+	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI("***"))
 	if err != nil {
 		fmt.Println("MongoDB connection error:", err)
 		return
