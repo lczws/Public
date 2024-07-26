@@ -22,14 +22,6 @@ func main() {
 
 	flag.StringVar(&dburl, "dburl", "", "MongoDB URL")
 
-	var database string
-
-	flag.StringVar(&db, "db", "", "MongoDB Database")
-
-	var collection string
-
-	flag.StringVar(&collection, "cl", "", "MongoDB Collection")
-
 	// 创建一个默认的路由引擎
 	r := gin.Default()
 
@@ -45,7 +37,7 @@ func main() {
 	}
 	defer client.Disconnect(context.TODO())
 
-	collection := client.Database(database).Collection(collection)
+	collection := client.Database("Http").Collection("requests")
 
 	r.Any("/data/:path", func(c *gin.Context) {
 		path := c.Param("path")
