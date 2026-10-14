@@ -447,27 +447,27 @@ generate_and_display_nodes() {
     PORT_WS="${PORT_WS:-${PORT_CF_WS:-$DEFAULT_WS_PORT}}"
 
     # 1. VLESS + Reality 链接 (TCP PORT)
-    local vless_reality_link="vless://${UUID}@${host_ip}:${PORT_REALITY_HY2}?security=reality&encryption=none&pbk=${REALITY_PUBKEY}&headerType=none&fp=chrome&spx=%2F&type=tcp&flow=xtls-rprx-vision&sni=${REALITY_SNI}&sid=${REALITY_SID}#Singbox-VLESS-Reality"
+    local vless_reality_link="vless://${UUID}@${host_ip}:${PORT_REALITY_HY2}?security=reality&encryption=none&pbk=${REALITY_PUBKEY}&headerType=none&fp=chrome&spx=%2F&type=tcp&flow=xtls-rprx-vision&sni=${REALITY_SNI}&sid=${REALITY_SID}#Reality"
 
     # 2. Hysteria 2 链接 (UDP PORT)
-    local hy2_link="hysteria2://${HY2_PASS}@${host_ip}:${PORT_REALITY_HY2}/?insecure=1&sni=${REALITY_SNI}#Singbox-Hysteria2"
+    local hy2_link="hysteria2://${HY2_PASS}@${host_ip}:${PORT_REALITY_HY2}/?insecure=1&sni=${REALITY_SNI}#Hysteria2"
 
     # 3. 普通 VLESS 直连链接 (TCP PORT+1)
-    local vless_plain_link="vless://${UUID}@${host_ip}:${PORT_PLAIN_HY1}?encryption=none&security=none&type=tcp#Singbox-VLESS-Plain"
+    local vless_plain_link="vless://${UUID}@${host_ip}:${PORT_PLAIN_HY1}?encryption=none&security=none&type=tcp#Vless"
 
     # 4. Hysteria 1 链接 (UDP PORT+1)
-    local hy1_link="hysteria://${host_ip}:${PORT_PLAIN_HY1}?protocol=udp&auth=${HY1_AUTH}&upmbps=${HY1_UP_MBPS}&downmbps=${HY1_DOWN_MBPS}&insecure=1&peer=${REALITY_SNI}#Singbox-Hysteria1"
+    local hy1_link="hysteria://${host_ip}:${PORT_PLAIN_HY1}?protocol=udp&auth=${HY1_AUTH}&upmbps=${HY1_UP_MBPS}&downmbps=${HY1_DOWN_MBPS}&insecure=1&peer=${REALITY_SNI}#Hysteria1"
 
     # 5. Shadowsocks 2022 链接 (TCP+UDP PORT+2)
     local ss_raw="2022-blake3-aes-128-gcm:${SS_PASSWORD}"
     local ss_encoded
     ss_encoded=$(printf "%s" "$ss_raw" | base64 | tr -d '\n')
-    local ss_link="ss://${ss_encoded}@${host_ip}:${PORT_SS}#Singbox-SS-2022"
+    local ss_link="ss://${ss_encoded}@${host_ip}:${PORT_SS}#SS"
 
     # 6. VLESS + WS 链接 (直接使用本机 IP 与指定端口)
     local vless_ws_link=""
     if [[ "$USE_WS" = "true" ]]; then
-        vless_ws_link="vless://${UUID}@${host_ip}:${PORT_WS}?encryption=none&security=none&type=ws&host=${host_ip}&path=%2F${WS_PATH}#Singbox-VLESS-WS"
+        vless_ws_link="vless://${UUID}@${host_ip}:${PORT_WS}?encryption=none&security=none&type=ws&host=${host_ip}&path=%2F${WS_PATH}#Vless-WS"
     fi
 
     # 写入 nodes.txt
@@ -547,7 +547,7 @@ EOF
     echo -e "${PURPLE}====================================================================${PLAIN}"
     cat <<EOF
 proxies:
-  - name: "VLESS-Reality-AMD"
+  - name: "Reality"
     type: vless
     server: ${host_ip}
     port: ${PORT_REALITY_HY2}
@@ -562,7 +562,7 @@ proxies:
       short-id: ${REALITY_SID}
     client-fingerprint: chrome
 
-  - name: "Hysteria2-AMD"
+  - name: "Hysteria2"
     type: hysteria2
     server: ${host_ip}
     port: ${PORT_REALITY_HY2}
@@ -570,7 +570,7 @@ proxies:
     sni: ${REALITY_SNI}
     skip-cert-verify: true
 
-  - name: "VLESS-Plain"
+  - name: "Vless"
     type: vless
     server: ${host_ip}
     port: ${PORT_PLAIN_HY1}
@@ -578,7 +578,7 @@ proxies:
     network: tcp
     udp: true
 
-  - name: "Hysteria1-AMD"
+  - name: "Hysteria1"
     type: hysteria
     server: ${host_ip}
     port: ${PORT_PLAIN_HY1}
@@ -588,7 +588,7 @@ proxies:
     sni: ${REALITY_SNI}
     skip-cert-verify: true
 
-  - name: "Shadowsocks-2022"
+  - name: "Shadowsocks"
     type: ss
     server: ${host_ip}
     port: ${PORT_SS}
@@ -600,7 +600,7 @@ EOF
     if [[ "$USE_WS" = "true" ]]; then
         cat <<EOF
 
-  - name: "VLESS-WS"
+  - name: "Vless-WS"
     type: vless
     server: ${host_ip}
     port: ${PORT_WS}
