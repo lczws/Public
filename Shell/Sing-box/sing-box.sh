@@ -5,11 +5,11 @@
 #   - 专用于在当前目录下生成 Sing-box 服务端配置 (config.json)、证书密钥及节点分享
 #   - 仅保留两个核心功能:
 #       1. 生成全新配置文件与节点分享信息
-#       2. 查看已生成的节点链接与客户端配置
+#       2. 查看已生成的节点分享链接
 #   - 导出路径固定为当前运行目录，不进行任何系统服务注册与软件安装
 # 端口分配规范:
 #   - 基础端口 (PORT):       TCP -> VLESS + Reality (偷 AMD SNI) | UDP -> Hysteria 2
-#   - 偏移端口 1 (PORT+1):   TCP -> 普通 VLESS (无加密直连)     | UDP -> Hysteria 1 (HY1)
+#   - 偏移端口 1 (PORT+1):   TCP -> 普通 VLESS (无加密直连)      | UDP -> Hysteria 1 (HY1)
 #   - 偏移端口 2 (PORT+2):   TCP + UDP -> Shadowsocks (2022-blake3-aes-128-gcm)
 #   - 可选端口 (默认 2095):  TCP -> VLESS + WS (WebSocket 协议，支持自定义端口)
 # ==============================================================================
@@ -136,7 +136,7 @@ generate_reality_keys() {
     fi
 }
 
-# 生成 Hysteria 1 / 2 凭据与 10 年期自签名证书
+# 生成 Hysteria 1 / 2 凭据与 10 年期自签名证书 (不绑定特定大厂 SNI)
 generate_hy_credentials() {
     # Hysteria 2 独立密码
     HY2_PASS=$(openssl rand -base64 16 2>/dev/null | tr -dc 'a-zA-Z0-9' | head -c 16)
@@ -146,13 +146,13 @@ generate_hy_credentials() {
     HY1_AUTH=$(openssl rand -base64 16 2>/dev/null | tr -dc 'a-zA-Z0-9' | head -c 16)
     [[ -z "$HY1_AUTH" ]] && HY1_AUTH=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 16)
 
-    # 优先生成高效 ECC (prime256v1) 证书，不支持时回退为 RSA 2048
+    # 优先生成高效 ECC (prime256v1) 证书，CN 设为通用 localhost，不支持时回退为 RSA 2048
     openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
         -keyout "$HY2_KEY" -out "$HY2_CERT" \
-        -days 3650 -subj "/CN=${REALITY_SNI}" >/dev/null 2>&1 || \
+        -days 3650 -subj "/CN=localhost" >/dev/null 2>&1 || \
     openssl req -x509 -nodes -newkey rsa:2048 \
         -keyout "$HY2_KEY" -out "$HY2_CERT" \
-        -days 3650 -subj "/CN=${REALITY_SNI}" >/dev/null 2>&1
+        -days 3650 -subj "/CN=localhost" >/dev/null 2>&1
 
     chmod 644 "$HY2_CERT" 2>/dev/null || true
     chmod 600 "$HY2_KEY" 2>/dev/null || true
@@ -161,7 +161,7 @@ generate_hy_credentials() {
 # 功能 1: 生成全新配置文件与节点分享信息
 generate_all_configurations() {
     echo -e "${PURPLE}====================================================${PLAIN}"
-    echo -e "${WHITE}           Sing-box 服务端配置生成向导              ${PLAIN}"
+    echo -e "${WHITE}            Sing-box 服务端配置生成向导             ${PLAIN}"
     echo -e "${WHITE}     导出路径: ${GREEN}${CONFIG_DIR}${WHITE} (当前目录)       ${PLAIN}"
     echo -e "${PURPLE}====================================================${PLAIN}"
 
@@ -427,11 +427,11 @@ HY2_PASS="${HY2_PASS}"
 SS_PASSWORD="${SS_PASSWORD}"
 EOF
 
-    # 生成节点分享链接与客户端配置片段并输出
+    # 生成节点分享链接并输出
     generate_and_display_nodes
 }
 
-# 功能 2: 查看已生成的节点链接与客户端配置
+# 功能 2: 查看已生成的节点分享链接
 generate_and_display_nodes() {
     if [[ ! -f "$INFO_FILE" ]]; then
         echo -e "${RED}[错误] 当前目录下未找到配置记录 (info.env)，请先执行功能 1 生成配置！${PLAIN}"
@@ -449,14 +449,14 @@ generate_and_display_nodes() {
     # 1. VLESS + Reality 链接 (TCP PORT)
     local vless_reality_link="vless://${UUID}@${host_ip}:${PORT_REALITY_HY2}?security=reality&encryption=none&pbk=${REALITY_PUBKEY}&headerType=none&fp=chrome&spx=%2F&type=tcp&flow=xtls-rprx-vision&sni=${REALITY_SNI}&sid=${REALITY_SID}#Reality"
 
-    # 2. Hysteria 2 链接 (UDP PORT)
-    local hy2_link="hysteria2://${HY2_PASS}@${host_ip}:${PORT_REALITY_HY2}/?insecure=1&sni=${REALITY_SNI}#Hysteria2"
+    # 2. Hysteria 2 链接 (UDP PORT，不带 sni 参数)
+    local hy2_link="hysteria2://${HY2_PASS}@${host_ip}:${PORT_REALITY_HY2}/?insecure=1#Hysteria2"
 
     # 3. 普通 VLESS 直连链接 (TCP PORT+1)
     local vless_plain_link="vless://${UUID}@${host_ip}:${PORT_PLAIN_HY1}?encryption=none&security=none&type=tcp#Vless"
 
-    # 4. Hysteria 1 链接 (UDP PORT+1)
-    local hy1_link="hysteria://${host_ip}:${PORT_PLAIN_HY1}?protocol=udp&auth=${HY1_AUTH}&upmbps=${HY1_UP_MBPS}&downmbps=${HY1_DOWN_MBPS}&insecure=1&peer=${REALITY_SNI}#Hysteria1"
+    # 4. Hysteria 1 链接 (UDP PORT+1，不带 peer/sni 参数)
+    local hy1_link="hysteria://${host_ip}:${PORT_PLAIN_HY1}?protocol=udp&auth=${HY1_AUTH}&upmbps=${HY1_UP_MBPS}&downmbps=${HY1_DOWN_MBPS}&insecure=1#Hysteria1"
 
     # 5. Shadowsocks 2022 链接 (TCP+UDP PORT+2)
     local ss_raw="2022-blake3-aes-128-gcm:${SS_PASSWORD}"
@@ -500,7 +500,7 @@ ${hy1_link}
 --------------------------------------------------------------------------------
 ${ss_link}
 加密方式: 2022-blake3-aes-128-gcm
-密  钥: ${SS_PASSWORD}
+密    钥: ${SS_PASSWORD}
 EOF
 
     if [[ "$USE_WS" = "true" ]]; then
@@ -541,78 +541,6 @@ EOF
         echo -e "${PURPLE}--- [节点 6] VLESS + WS (TCP ${PORT_WS} 端口, WebSocket) ---${PLAIN}"
         echo -e "${WHITE}${vless_ws_link}${PLAIN}\n"
     fi
-
-    echo -e "${PURPLE}====================================================================${PLAIN}"
-    echo -e "${WHITE}           Clash Meta (Mihomo) 客户端配置参考片段                    ${PLAIN}"
-    echo -e "${PURPLE}====================================================================${PLAIN}"
-    cat <<EOF
-proxies:
-  - name: "Reality"
-    type: vless
-    server: ${host_ip}
-    port: ${PORT_REALITY_HY2}
-    uuid: ${UUID}
-    network: tcp
-    udp: true
-    tls: true
-    flow: xtls-rprx-vision
-    servername: ${REALITY_SNI}
-    reality-opts:
-      public-key: ${REALITY_PUBKEY}
-      short-id: ${REALITY_SID}
-    client-fingerprint: chrome
-
-  - name: "Hysteria2"
-    type: hysteria2
-    server: ${host_ip}
-    port: ${PORT_REALITY_HY2}
-    password: "${HY2_PASS}"
-    sni: ${REALITY_SNI}
-    skip-cert-verify: true
-
-  - name: "Vless"
-    type: vless
-    server: ${host_ip}
-    port: ${PORT_PLAIN_HY1}
-    uuid: ${UUID}
-    network: tcp
-    udp: true
-
-  - name: "Hysteria1"
-    type: hysteria
-    server: ${host_ip}
-    port: ${PORT_PLAIN_HY1}
-    auth_str: "${HY1_AUTH}"
-    up: "${HY1_UP_MBPS} Mbps"
-    down: "${HY1_DOWN_MBPS} Mbps"
-    sni: ${REALITY_SNI}
-    skip-cert-verify: true
-
-  - name: "Shadowsocks"
-    type: ss
-    server: ${host_ip}
-    port: ${PORT_SS}
-    cipher: 2022-blake3-aes-128-gcm
-    password: "${SS_PASSWORD}"
-    udp: true
-EOF
-
-    if [[ "$USE_WS" = "true" ]]; then
-        cat <<EOF
-
-  - name: "Vless-WS"
-    type: vless
-    server: ${host_ip}
-    port: ${PORT_WS}
-    uuid: ${UUID}
-    network: ws
-    udp: true
-    ws-opts:
-      path: "/${WS_PATH}"
-      headers:
-        Host: ${host_ip}
-EOF
-    fi
     echo -e "${GREEN}====================================================================${PLAIN}\n"
 }
 
@@ -620,11 +548,11 @@ EOF
 show_menu() {
     clear
     echo -e "${PURPLE}====================================================${PLAIN}"
-    echo -e "${WHITE}       Sing-box 多协议配置文件生成与管理工具        ${PLAIN}"
+    echo -e "${WHITE}        Sing-box 多协议配置文件生成与管理工具        ${PLAIN}"
     echo -e "${WHITE}  导出路径: ${CYAN}${CONFIG_DIR}${PLAIN} (当前目录)"
     echo -e "${PURPLE}====================================================${PLAIN}"
     echo -e " ${GREEN}1.${PLAIN} 生成全新配置文件与节点分享信息"
-    echo -e " ${GREEN}2.${PLAIN} 查看已生成的节点链接与客户端配置"
+    echo -e " ${GREEN}2.${PLAIN} 查看已生成的节点分享链接"
     echo -e " ${GREEN}0.${PLAIN} 退出"
     echo -e "${PURPLE}====================================================${PLAIN}"
 
@@ -658,7 +586,7 @@ Sing-box 多协议配置文件生成器
 
 选项:
   -g, --generate       直接执行配置生成 (可配合环境变量)
-  -v, --view           查看已生成的节点信息与客户端配置
+  -v, --view           查看已生成的节点分享链接
   -h, --help           显示此帮助信息
 
 支持的环境变量 (适用于非交互式脚本生成):
