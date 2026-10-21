@@ -6,7 +6,7 @@
 
 ## 一、支持环境与协议
 
-* **支持系统**：Debian、Ubuntu、CentOS / AlmaLinux / Rocky Linux、Fedora、**Alpine Linux**（兼容 systemd 与 OpenRC）
+* **支持系统**：Debian、Ubuntu、CentOS / AlmaLinux / Rocky Linux、Fedora、Alpine Linux（兼容 systemd 与 OpenRC）
 * **支持架构**：`x86_64 (amd64)`、`aarch64 (arm64)`、`armv7`、`i386`
 * **支持协议（自动识别）**：
   * `VLESS`（Reality / WS+TLS / WS / TLS / TCP）
