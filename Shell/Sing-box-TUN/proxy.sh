@@ -416,6 +416,34 @@ def main():
     outbound["tag"] = "proxy"
     outbound["domain_resolver"] = "dns-bootstrap"
 
+    # config = {
+    #     "log": {"disabled": False, "level": "warn"},
+    #     "dns": {
+    #         "servers": [
+    #             {"type": "udp", "tag": "dns-bootstrap", "server": "1.1.1.1", "server_port": 53},
+    #             {"type": "udp", "tag": "dns-proxy", "server": "1.1.1.1", "server_port": 53, "detour": "proxy"}
+    #         ],
+    #         "final": "dns-proxy"
+    #     },
+    #     "inbounds": [{
+    #         "type": "tun", "tag": "tun-in", "interface_name": "singtun0",
+    #         "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+    #         "mtu": 1500, "auto_route": True, "strict_route": True
+    #     }],
+    #     "outbounds": [
+    #         outbound,
+    #         {"type": "direct", "tag": "direct"},
+    #         {"type": "block", "tag": "block"}
+    #     ],
+    #     "route": {
+    #         "auto_detect_interface": True,
+    #         "default_domain_resolver": "dns-bootstrap",
+    #         "rules": [{"protocol": "dns", "action": "hijack-dns"}],
+    #         "final": "proxy"
+    #     }
+    # }
+    
+    #V4-Only
     config = {
         "log": {"disabled": False, "level": "warn"},
         "dns": {
@@ -423,11 +451,12 @@ def main():
                 {"type": "udp", "tag": "dns-bootstrap", "server": "1.1.1.1", "server_port": 53},
                 {"type": "udp", "tag": "dns-proxy", "server": "1.1.1.1", "server_port": 53, "detour": "proxy"}
             ],
+            "strategy": "ipv4_only",
             "final": "dns-proxy"
         },
         "inbounds": [{
             "type": "tun", "tag": "tun-in", "interface_name": "singtun0",
-            "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+            "address": ["172.19.0.1/30"],
             "mtu": 1500, "auto_route": True, "strict_route": True
         }],
         "outbounds": [
