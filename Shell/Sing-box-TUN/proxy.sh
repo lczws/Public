@@ -44,7 +44,7 @@ detect_arch() {
 }
 
 # ============================================================
-# 依赖与 sing-box v1.14.3 安装
+# 依赖与 sing-box 安装
 # ============================================================
 
 install_dependencies() {
@@ -215,7 +215,7 @@ svc_log() {
 }
 
 # ============================================================
-# 写入 Python 自动识别与配置生成器
+# 写入 Python 自动识别与配置生成器 (已适配 sing-box 1.14+)
 # ============================================================
 
 install_parser() {
@@ -414,59 +414,32 @@ def main():
     link, cfg_path = sys.argv[1], sys.argv[2]
     outbound, proto_name = parse_url(link)
     outbound["tag"] = "proxy"
-    outbound["domain_resolver"] = "dns-bootstrap"
+    outbound["domain_resolver"] = "dns-direct"
 
-    # config = {
-    #     "log": {"disabled": False, "level": "warn"},
-    #     "dns": {
-    #         "servers": [
-    #             {"type": "udp", "tag": "dns-bootstrap", "server": "1.1.1.1", "server_port": 53},
-    #             {"type": "udp", "tag": "dns-proxy", "server": "1.1.1.1", "server_port": 53, "detour": "proxy"}
-    #         ],
-    #         "final": "dns-proxy"
-    #     },
-    #     "inbounds": [{
-    #         "type": "tun", "tag": "tun-in", "interface_name": "singtun0",
-    #         "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
-    #         "mtu": 1500, "auto_route": True,
-    #         "strict_route": False
-    #     }],
-    #     "outbounds": [
-    #         outbound,
-    #         {"type": "direct", "tag": "direct"},
-    #         {"type": "block", "tag": "block"}
-    #     ],
-    #     "route": {
-    #         "auto_detect_interface": True,
-    #         "default_domain_resolver": "dns-bootstrap",
-    #          "rules": [
-    #         {"protocol": "dns", "action": "hijack-dns"},
-    #         {"ip_is_private": True, "outbound": "direct"}
-    #         ],
-    #         "final": "proxy"
-    #     }
-    # }
-    
-    #V4-Only
     config = {
         "log": {"disabled": False, "level": "warn"},
         "dns": {
             "servers": [
-                {"type": "udp", "tag": "dns-bootstrap", "server": "1.1.1.1", "server_port": 53},
-                {"type": "udp", "tag": "dns-proxy", "server": "1.1.1.1", "server_port": 53, "detour": "proxy"}
+                {
+                    "type": "udp",
+                    "tag": "dns-direct",
+                    "server": "1.1.1.1",
+                    "server_port": 53,
+                    "detour": "direct"
+                }
             ],
-            # 1. 域名解析仅出 IPv4，让容器内的所有主动外连精准走 IPv4 出口
             "strategy": "ipv4_only",
-            "final": "dns-proxy"
+            "final": "dns-direct"
         },
         "inbounds": [{
-            "type": "tun", "tag": "tun-in", "interface_name": "singtun0",
-            # 2. 关键：只给 TUN 分配 IPv4 地址，彻底不声明 IPv6
+            "type": "tun",
+            "tag": "tun-in",
+            "interface_name": "singtun0",
             "address": ["172.19.0.1/30"],
             "mtu": 1500,
             "auto_route": True,
-            # 3. 关键：关闭 strict_route，防止内核策略路由拦截非 TUN 的原生网卡流量
-            "strict_route": False
+            "strict_route": False,
+            "stack": "system"
         }],
         "outbounds": [
             outbound,
@@ -475,10 +448,9 @@ def main():
         ],
         "route": {
             "auto_detect_interface": True,
-            "default_domain_resolver": "dns-bootstrap",
+            "default_domain_resolver": "dns-direct",
             "rules": [
                 {"protocol": "dns", "action": "hijack-dns"},
-                # 局域网/内网网段直连，不走代理节点，保证局域网连入正常
                 {"ip_is_private": True, "outbound": "direct"}
             ],
             "final": "proxy"
@@ -509,6 +481,9 @@ change_outbound() {
     [ -z "$LINK" ] && { echo "链接不能为空。"; return; }
 
     [ -f "$CONFIG" ] && cp -f "$CONFIG" "$BACKUP_DIR/config-$(date +%Y%m%d-%H%M%S).json"
+
+    # 确保 parser 始终是最新版本
+    install_parser
 
     if PROTO_NAME="$(python3 "$PARSER" "$LINK" "$CONFIG" 2>&1)"; then
         echo
@@ -568,7 +543,7 @@ menu() {
 }
 
 # ============================================================
-# 入口判定：首次运行自动部署命令 out，后续直接进菜单
+# 入口判定
 # ============================================================
 
 if [ "${1:-}" != "--menu" ]; then
@@ -589,6 +564,9 @@ EOF
     echo
     echo "安装完成！后续随时输入 out 即可呼出管理菜单。"
     sleep 1
+else
+    # 每次通过 out 呼出时同步更新 parser.py
+    install_parser
 fi
 
 menu
