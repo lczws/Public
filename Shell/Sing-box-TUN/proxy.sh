@@ -428,7 +428,8 @@ def main():
     #     "inbounds": [{
     #         "type": "tun", "tag": "tun-in", "interface_name": "singtun0",
     #         "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
-    #         "mtu": 1500, "auto_route": True, "strict_route": True
+    #         "mtu": 1500, "auto_route": True,
+    #         "strict_route": False
     #     }],
     #     "outbounds": [
     #         outbound,
@@ -438,7 +439,10 @@ def main():
     #     "route": {
     #         "auto_detect_interface": True,
     #         "default_domain_resolver": "dns-bootstrap",
-    #         "rules": [{"protocol": "dns", "action": "hijack-dns"}],
+    #          "rules": [
+    #         {"protocol": "dns", "action": "hijack-dns"},
+    #         {"ip_is_private": True, "outbound": "direct"}
+    #         ],
     #         "final": "proxy"
     #     }
     # }
@@ -451,13 +455,18 @@ def main():
                 {"type": "udp", "tag": "dns-bootstrap", "server": "1.1.1.1", "server_port": 53},
                 {"type": "udp", "tag": "dns-proxy", "server": "1.1.1.1", "server_port": 53, "detour": "proxy"}
             ],
+            # 1. 域名解析仅出 IPv4，让容器内的所有主动外连精准走 IPv4 出口
             "strategy": "ipv4_only",
             "final": "dns-proxy"
         },
         "inbounds": [{
             "type": "tun", "tag": "tun-in", "interface_name": "singtun0",
+            # 2. 关键：只给 TUN 分配 IPv4 地址，彻底不声明 IPv6
             "address": ["172.19.0.1/30"],
-            "mtu": 1500, "auto_route": True, "strict_route": True
+            "mtu": 1500,
+            "auto_route": True,
+            # 3. 关键：关闭 strict_route，防止内核策略路由拦截非 TUN 的原生网卡流量
+            "strict_route": False
         }],
         "outbounds": [
             outbound,
@@ -467,7 +476,11 @@ def main():
         "route": {
             "auto_detect_interface": True,
             "default_domain_resolver": "dns-bootstrap",
-            "rules": [{"protocol": "dns", "action": "hijack-dns"}],
+            "rules": [
+                {"protocol": "dns", "action": "hijack-dns"},
+                # 局域网/内网网段直连，不走代理节点，保证局域网连入正常
+                {"ip_is_private": True, "outbound": "direct"}
+            ],
             "final": "proxy"
         }
     }
