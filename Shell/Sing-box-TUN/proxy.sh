@@ -437,7 +437,7 @@ def main():
             "address": ["172.19.0.1/30"],
             "mtu": 1500,
             "auto_route": True,
-            "strict_route": false,
+            "strict_route": False,
             "stack": "system"
         }],
         "outbounds": [
