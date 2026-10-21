@@ -215,7 +215,7 @@ svc_log() {
 }
 
 # ============================================================
-# 写入 Python 自动识别与配置生成器 (已适配 sing-box 1.14+)
+# 写入 Python 自动识别与配置生成器
 # ============================================================
 
 install_parser() {
@@ -424,8 +424,7 @@ def main():
                     "type": "udp",
                     "tag": "dns-direct",
                     "server": "1.1.1.1",
-                    "server_port": 53,
-                    "detour": "direct"
+                    "server_port": 53
                 }
             ],
             "strategy": "ipv4_only",
@@ -438,7 +437,7 @@ def main():
             "address": ["172.19.0.1/30"],
             "mtu": 1500,
             "auto_route": True,
-            "strict_route": False,
+            "strict_route": false,
             "stack": "system"
         }],
         "outbounds": [
@@ -482,7 +481,6 @@ change_outbound() {
 
     [ -f "$CONFIG" ] && cp -f "$CONFIG" "$BACKUP_DIR/config-$(date +%Y%m%d-%H%M%S).json"
 
-    # 确保 parser 始终是最新版本
     install_parser
 
     if PROTO_NAME="$(python3 "$PARSER" "$LINK" "$CONFIG" 2>&1)"; then
@@ -565,7 +563,6 @@ EOF
     echo "安装完成！后续随时输入 out 即可呼出管理菜单。"
     sleep 1
 else
-    # 每次通过 out 呼出时同步更新 parser.py
     install_parser
 fi
 
