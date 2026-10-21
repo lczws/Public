@@ -27,7 +27,7 @@
 ### 1. 一键安装
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/lczws/Public/Shell/Sing-box-TUN/main/proxy.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/lczws/Public/main/Shell/Sing-box-TUN/proxy.sh)
 ```
 
 ### 2. 赋予执行权限并运行
