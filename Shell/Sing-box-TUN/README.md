@@ -46,7 +46,7 @@
 ## 一键安装
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/edmond1294/SingboxLocateTUN/main/proxy.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/lczws/Public/Shell/Sing-box-TUN/main/proxy.sh)
 ```
 
 ## 快速使用
