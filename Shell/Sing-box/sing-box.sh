@@ -12,6 +12,11 @@
 #          - 为所有协议一键同步添加通用用户
 #          - 自由删除指定入站的用户 (带安全保护与防误删提示)
 #          - 自动生成并导出新增用户的专属客户端节点分享链接
+#       4. VLESS + WS 入口动态管理:
+#          - 无损开启/追加 VLESS + WS 入口 (保留现有全部协议、密钥与用户)
+#          - 修改端口与 WebSocket 路径 (保留所有现有用户)
+#          - 安全关闭并移除 VLESS + WS 入站
+#          - 一键导出专属 WS 节点链接与追加记录
 #   - 导出路径固定为当前运行目录，不进行任何系统服务注册与软件安装
 # 端口分配规范:
 #   - 基础端口 (PORT):       TCP -> VLESS + Reality (偷 AMD SNI) | UDP -> Hysteria 2
@@ -24,7 +29,7 @@ set -o pipefail
 
 # 脚本与配置版本
 GENERATOR_TAG="SING-BOX.SH"
-GENERATOR_VER="1.1.0"
+GENERATOR_VER="1.2.0"
 
 # 终端输出高亮颜色定义
 RED='\033[0;31m'
@@ -147,8 +152,8 @@ generate_reality_keys() {
         local tmp_key
         tmp_key=$(mktemp 2>/dev/null || echo "/tmp/x25519.$$.key")
         if openssl genpkey -algorithm X25519 -out "$tmp_key" 2>/dev/null; then
-            REALITY_PRIVKEY=$(openssl pkey -in "$tmp_key" -outform DER 2>/dev/null | tail -c 32 | base64 | tr -d '\r\n=')
-            REALITY_PUBKEY=$(openssl pkey -in "$tmp_key" -pubout -outform DER 2>/dev/null | tail -c 32 | base64 | tr -d '\r\n=')
+            REALITY_PRIVKEY=$(openssl pkey -in "$tmp_key" -outform DER 2>/dev/null | tail -c 32 | base64 | tr -d '\r\n=' | tr '+/' '-_')
+            REALITY_PUBKEY=$(openssl pkey -in "$tmp_key" -pubout -outform DER 2>/dev/null | tail -c 32 | base64 | tr -d '\r\n=' | tr '+/' '-_')
         fi
         rm -f "$tmp_key"
     fi
@@ -791,6 +796,13 @@ def find(data, tag):
     die(f"未找到入站 \"{tag}\"")
 
 
+def find_ws(data):
+    for ib in inbounds(data):
+        if ib.get("type") == "vless" and is_ws(ib):
+            return ib
+    return None
+
+
 def users_of(ib):
     u = ib.get("users")
     return u if isinstance(u, list) else None
@@ -1105,6 +1117,157 @@ elif CMD == "show":
             with open(outfile, "w", encoding="utf-8") as f:
                 f.write("\n".join(all_links) + "\n")
             print(f"\n{G}[提示] 以上链接已同时保存至: {outfile}{N}")
+
+elif CMD == "ws_info":
+    ib = find_ws(data)
+    if not ib:
+        print("DISABLED")
+    else:
+        tag = ib.get("tag", "vless-ws-in")
+        port = ib.get("listen_port", "")
+        tr = ib.get("transport", {}) if isinstance(ib.get("transport"), dict) else {}
+        path = tr.get("path", "")
+        us = users_of(ib) or []
+        print(f"ENABLED|{tag}|{port}|{path}|{len(us)}")
+        for u in us:
+            print(f"USER|{u.get('name', '未命名')}|{u.get('uuid', '')}")
+
+elif CMD == "get_vless_uuid":
+    found_uuid = ""
+    for ib in inbounds(data):
+        if ib.get("type") == "vless":
+            us = users_of(ib)
+            if us and isinstance(us, list) and len(us) > 0:
+                uid = us[0].get("uuid")
+                if uid:
+                    found_uuid = uid
+                    break
+    print(found_uuid)
+
+elif CMD == "check_port":
+    target_port = int(ARGS[0])
+    exclude_tag = ARGS[1] if len(ARGS) > 1 else ""
+    conflict = None
+    for ib in inbounds(data):
+        if ib.get("tag") == exclude_tag:
+            continue
+        if ib.get("listen_port") == target_port:
+            conflict = ib.get("tag", "未知入站")
+            break
+    if conflict:
+        print(f"OCCUPIED|{conflict}")
+    else:
+        print("FREE")
+
+elif CMD == "add_ws":
+    port_str, path_raw, name, uid, host = ARGS[:5]
+    try:
+        port = int(port_str)
+    except Exception:
+        die(f"端口必须是有效数字: {port_str}")
+
+    for ib in inbounds(data):
+        if ib.get("tag") != "vless-ws-in" and ib.get("listen_port") == port:
+            die(f"端口 {port} 已被入站 \"{ib.get('tag')}\" 占用")
+
+    path = "/" + path_raw.strip("/")
+    if not uid:
+        uid = str(uuidlib.uuid4())
+    try:
+        uuidlib.UUID(uid)
+    except Exception:
+        die(f"UUID 格式不正确: {uid}")
+
+    if not name:
+        name = "ws-user"
+
+    existing = find_ws(data)
+    if existing:
+        existing["listen_port"] = port
+        existing["transport"] = {
+            "type": "ws",
+            "path": path,
+            "max_early_data": 2048,
+            "early_data_header_name": "Sec-WebSocket-Protocol"
+        }
+        us = users_of(existing)
+        if not us:
+            existing["users"] = [{"name": name, "uuid": uid}]
+        target_ib = existing
+    else:
+        new_ib = {
+            "type": "vless",
+            "tag": "vless-ws-in",
+            "listen": "::",
+            "listen_port": port,
+            "users": [
+                {
+                    "name": name,
+                    "uuid": uid
+                }
+            ],
+            "transport": {
+                "type": "ws",
+                "path": path,
+                "max_early_data": 2048,
+                "early_data_header_name": "Sec-WebSocket-Protocol"
+            }
+        }
+        data.setdefault("inbounds", []).append(new_ib)
+        target_ib = new_ib
+
+    save(data)
+    print("SUCCESS")
+    for u in users_of(target_ib) or []:
+        uname = u.get("name", name)
+        uuid_val = u.get("uuid", uid)
+        lk = make_link(target_ib, uname, uuid_val, host, "")
+        print(f"LINK|{uname}|{uuid_val}|{lk}")
+
+elif CMD == "update_ws":
+    port_str, path_raw, host = ARGS[:3]
+    try:
+        port = int(port_str)
+    except Exception:
+        die(f"端口必须是有效数字: {port_str}")
+
+    ib = find_ws(data)
+    if not ib:
+        die("当前配置中未找到 VLESS + WS 入站")
+
+    for other in inbounds(data):
+        if other is not ib and other.get("listen_port") == port:
+            die(f"端口 {port} 已被入站 \"{other.get('tag')}\" 占用")
+
+    path = "/" + path_raw.strip("/")
+    ib["listen_port"] = port
+    tr = ib.get("transport")
+    if not isinstance(tr, dict):
+        ib["transport"] = {}
+        tr = ib["transport"]
+    tr["type"] = "ws"
+    tr["path"] = path
+    tr.setdefault("max_early_data", 2048)
+    tr.setdefault("early_data_header_name", "Sec-WebSocket-Protocol")
+
+    save(data)
+    print("SUCCESS")
+    for u in users_of(ib) or []:
+        uname = u.get("name", "ws-user")
+        uuid_val = u.get("uuid", "")
+        lk = make_link(ib, uname, uuid_val, host, "")
+        print(f"LINK|{uname}|{uuid_val}|{lk}")
+
+elif CMD == "del_ws":
+    ibs = data.get("inbounds", [])
+    before_len = len(ibs)
+    data["inbounds"] = [ib for ib in ibs if not (isinstance(ib, dict) and ib.get("type") == "vless" and is_ws(ib))]
+    if len(data["inbounds"]) == before_len:
+        data["inbounds"] = [ib for ib in ibs if not (isinstance(ib, dict) and ib.get("tag") == "vless-ws-in")]
+    if len(data["inbounds"]) == before_len:
+        die("当前配置中未找到任何 VLESS + WS 入站")
+    save(data)
+    print("SUCCESS")
 
 else:
     die(f"未知命令: {CMD}")
@@ -1510,11 +1673,12 @@ manage_inbound_users_menu() {
         echo -e " ${GREEN}4.${PLAIN} 删除指定入站的用户 (带安全保护)"
         echo -e " ${GREEN}5.${PLAIN} 查看/导出指定用户的节点分享链接"
         echo -e " ${GREEN}6.${PLAIN} 为当前配置文件添加本脚本专属标注注释"
+        echo -e " ${GREEN}7.${PLAIN} VLESS + WS 入口动态管理 (开启/关闭/修改/查看 WS 入口)"
         echo -e " ${GREEN}0.${PLAIN} 返回上一级菜单"
         echo -e "${PURPLE}====================================================${PLAIN}"
 
         local u_choice
-        read -r -p " 请输入选项 [0-6]: " u_choice
+        read -r -p " 请输入选项 [0-7]: " u_choice
         case "$u_choice" in
             1) list_all_inbounds_and_users ;;
             2) add_user_to_specific_inbound ;;
@@ -1522,10 +1686,347 @@ manage_inbound_users_menu() {
             4) delete_user_from_inbound ;;
             5) view_specific_user_link ;;
             6) tag_existing_config ;;
+            7) manage_vless_ws_menu ;;
             0) return 0 ;;
-            *) echo -e "${RED}[错误] 输入无效，请输入数字 0-6！${PLAIN}" ;;
+            *) echo -e "${RED}[错误] 输入无效，请输入数字 0-7！${PLAIN}" ;;
         esac
         echo ""
+    done
+}
+
+# ==============================================================================
+# VLESS + WS 动态管理功能
+# ==============================================================================
+
+# 同步更新 info.env 中的 WS 参数记录
+update_info_env_ws() {
+    local enable="$1" port="$2" path="$3"
+    [[ ! -f "$INFO_FILE" ]] && return 0
+    path="${path#/}"
+    if grep -q '^USE_WS=' "$INFO_FILE"; then
+        sed -i "s/^USE_WS=.*/USE_WS=\"${enable}\"/" "$INFO_FILE"
+    else
+        echo "USE_WS=\"${enable}\"" >> "$INFO_FILE"
+    fi
+    if [[ -n "$port" ]]; then
+        if grep -q '^PORT_WS=' "$INFO_FILE"; then
+            sed -i "s/^PORT_WS=.*/PORT_WS=\"${port}\"/" "$INFO_FILE"
+        else
+            echo "PORT_WS=\"${port}\"" >> "$INFO_FILE"
+        fi
+    fi
+    if [[ -n "$path" ]]; then
+        if grep -q '^WS_PATH=' "$INFO_FILE"; then
+            sed -i "s|^WS_PATH=.*|WS_PATH=\"${path}\"|" "$INFO_FILE"
+        else
+            echo "WS_PATH=\"${path}\"" >> "$INFO_FILE"
+        fi
+    fi
+}
+
+# 查看 VLESS + WS 节点分享链接
+view_ws_links() {
+    local cur_tag="$1"
+    prepare_link_context
+    echo -e "\n${PURPLE}====================================================================${PLAIN}"
+    echo -e "${WHITE}                 VLESS + WS 节点分享链接清单                        ${PLAIN}"
+    echo -e "${PURPLE}====================================================================${PLAIN}"
+    local ulist
+    ulist=$(sb_py users "$cur_tag" 2>/dev/null)
+    local all_ws_links=""
+    while IFS='|' read -r uname ucred; do
+        [[ -z "$uname" ]] && continue
+        local lk
+        lk=$(sb_py link "$cur_tag" "$uname" "$ucred" "$HOST_IP" "" 2>/dev/null)
+        echo -e " 用户: ${YELLOW}${uname}${PLAIN} | UUID: ${CYAN}${ucred}${PLAIN}"
+        echo -e "${WHITE}${lk}${PLAIN}\n"
+        all_ws_links="${all_ws_links}${lk}\n"
+    done <<< "$ulist"
+    echo -e "${PURPLE}====================================================================${PLAIN}"
+    ask_append_nodes "[VLESS + WS 节点链接]" "$all_ws_links"
+}
+
+# 修改 VLESS + WS 端口与路径
+modify_ws_inbound() {
+    local cur_tag="$1" cur_port="$2" cur_path="$3"
+    prepare_link_context
+    echo -e "\n${PURPLE}--- 修改 VLESS + WS 参数 (保留现有所有用户) ---${PLAIN}"
+    local new_port
+    while true; do
+        read -r -p " 请输入新监听端口 [当前: ${cur_port}]: " new_port
+        new_port="${new_port:-$cur_port}"
+        if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
+            echo -e "${RED}[错误] 端口号必须是 1 - 65535 之间的整数！${PLAIN}"
+            continue
+        fi
+        if [[ "$new_port" != "$cur_port" ]]; then
+            local chk
+            chk=$(sb_py check_port "$new_port" "$cur_tag" 2>/dev/null)
+            if [[ "$chk" == OCCUPIED* ]]; then
+                echo -e "${RED}[错误] 端口 ${new_port} 已被入站 [${chk#OCCUPIED|}] 占用，请更换端口！${PLAIN}"
+                continue
+            fi
+        fi
+        break
+    done
+
+    local new_path
+    read -r -p " 请输入新 WebSocket Path [当前: ${cur_path}]: " new_path
+    new_path="${new_path:-$cur_path}"
+    new_path="${new_path#/}"
+
+    backup_config
+    local res
+    res=$(sb_py update_ws "$new_port" "$new_path" "$HOST_IP" 2>&1)
+    if [[ "$(head -n 1 <<< "$res")" != SUCCESS* ]]; then
+        restore_config
+        echo -e "${RED}[修改失败] ${res#ERROR: }${PLAIN}"
+        return 1
+    fi
+
+    if ! commit_config; then
+        return 1
+    fi
+
+    update_info_env_ws true "$new_port" "$new_path"
+    echo -e "\n${GREEN}[成功] VLESS + WS 入站参数已更新！${PLAIN}"
+    local links_for_file=""
+    while IFS= read -r line; do
+        if [[ "$line" == LINK* ]]; then
+            IFS='|' read -r _ lname luuid lurl <<< "$line"
+            echo -e " 用户: ${YELLOW}${lname}${PLAIN} -> ${WHITE}${lurl}${PLAIN}"
+            links_for_file="${links_for_file}${lurl}\n"
+        fi
+    done <<< "$res"
+    echo ""
+    ask_append_nodes "[VLESS + WS 参数修改: 端口 ${new_port}, 路径 /${new_path}]" "$links_for_file"
+}
+
+# 关闭并移除 VLESS + WS 入站
+remove_ws_inbound() {
+    local cur_tag="$1"
+    echo -e "\n${YELLOW}[警告] 移除 VLESS + WS 入口后，相关 WebSocket 端口将停止监听！${PLAIN}"
+    echo -e "现有其他协议（Reality、Hysteria、Shadowsocks等）不受任何影响。"
+    local confirm
+    read -r -p " 确认要从配置文件中移除 [${cur_tag}] 入站吗？[y/N]: " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}[已取消]${PLAIN}"
+        return 0
+    fi
+
+    backup_config
+    local res
+    res=$(sb_py del_ws 2>&1)
+    if [[ "$(head -n 1 <<< "$res")" != SUCCESS* ]]; then
+        restore_config
+        echo -e "${RED}[移除失败] ${res#ERROR: }${PLAIN}"
+        return 1
+    fi
+
+    if ! commit_config; then
+        return 1
+    fi
+
+    update_info_env_ws false
+    echo -e "${GREEN}[成功] 已成功从配置文件中安全移除 VLESS + WS 入口！${PLAIN}"
+}
+
+# 启用并添加 VLESS + WS 入口
+enable_ws_inbound() {
+    prepare_link_context
+    echo -e "\n${PURPLE}--- 启用并添加 VLESS + WS 入站 (无损追加) ---${PLAIN}"
+
+    local in_port
+    while true; do
+        read -r -p " 请输入 VLESS + WS 监听端口 [默认: ${DEFAULT_WS_PORT}]: " in_port
+        in_port="${in_port:-$DEFAULT_WS_PORT}"
+        if ! [[ "$in_port" =~ ^[0-9]+$ ]] || [ "$in_port" -lt 1 ] || [ "$in_port" -gt 65535 ]; then
+            echo -e "${RED}[错误] 端口号必须是 1 - 65535 之间的整数！${PLAIN}"
+            continue
+        fi
+        local chk
+        chk=$(sb_py check_port "$in_port" 2>/dev/null)
+        if [[ "$chk" == OCCUPIED* ]]; then
+            local occ_tag="${chk#OCCUPIED|}"
+            echo -e "${RED}[错误] 端口 ${in_port} 已被当前配置中的入站 [${occ_tag}] 占用，请更换端口！${PLAIN}"
+            continue
+        fi
+        break
+    done
+
+    local rand_path
+    rand_path="vless-ws-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n' 2>/dev/null || openssl rand -hex 4)"
+    local in_path
+    read -r -p " 请输入 WebSocket Path [默认: /${rand_path}]: " in_path
+    in_path="${in_path:-$rand_path}"
+    in_path="${in_path#/}"
+
+    local in_user
+    read_username "ws-user" || return 1
+    in_user="$NEW_USERNAME"
+
+    local in_uuid exist_uuid
+    exist_uuid=$(sb_py get_vless_uuid 2>/dev/null)
+    if [[ -n "$exist_uuid" ]]; then
+        echo -e " 检测到配置中已存在 VLESS 节点的 UUID: ${CYAN}${exist_uuid}${PLAIN}"
+        read -r -p " 是否复用此 UUID？推荐直接复用 [Y/n]: " ans_reuse
+        if [[ ! "$ans_reuse" =~ ^[Nn]$ ]]; then
+            in_uuid="$exist_uuid"
+        fi
+    fi
+    if [[ -z "$in_uuid" ]]; then
+        read -r -p " 请输入新用户 UUID (留空自动生成随机 UUID): " in_uuid
+        in_uuid="${in_uuid:-$(generate_uuid)}"
+    fi
+
+    echo -e "\n${PURPLE}--- 即将写入的 VLESS + WS 入站配置 ---${PLAIN}"
+    echo -e " 监听端口: ${GREEN}${in_port}${PLAIN}"
+    echo -e " WS 路径 : ${YELLOW}/${in_path}${PLAIN}"
+    echo -e " 初始用户: ${WHITE}${in_user}${PLAIN}"
+    echo -e " 用户UUID: ${CYAN}${in_uuid}${PLAIN}"
+    local confirm
+    read -r -p " 确认将此入站安全写入 config.json？[Y/n]: " confirm
+    if [[ "$confirm" =~ ^[Nn]$ ]]; then
+        echo -e "${YELLOW}[已取消]${PLAIN}"
+        return 0
+    fi
+
+    backup_config
+    local res
+    res=$(sb_py add_ws "$in_port" "$in_path" "$in_user" "$in_uuid" "$HOST_IP" 2>&1)
+    if [[ "$(head -n 1 <<< "$res")" != SUCCESS* ]]; then
+        restore_config
+        echo -e "${RED}[添加失败] ${res#ERROR: }${PLAIN}"
+        return 1
+    fi
+
+    if ! commit_config; then
+        return 1
+    fi
+
+    update_info_env_ws true "$in_port" "$in_path"
+
+    echo -e "\n${GREEN}[成功] VLESS + WS 入口已成功无损添加到配置文件中！${PLAIN}"
+    echo -e "${PURPLE}====================================================================${PLAIN}"
+    echo -e "${WHITE}                    节点分享链接 (可导入 v2rayN)                    ${PLAIN}"
+    echo -e "${PURPLE}====================================================================${PLAIN}"
+
+    local links_for_file=""
+    while IFS= read -r line; do
+        if [[ "$line" == LINK* ]]; then
+            IFS='|' read -r _ lname luuid lurl <<< "$line"
+            echo -e " 用户: ${YELLOW}${lname}${PLAIN} | UUID: ${CYAN}${luuid}${PLAIN}"
+            echo -e "${WHITE}${lurl}${PLAIN}"
+            links_for_file="${links_for_file}${lurl}\n"
+        fi
+    done <<< "$res"
+    echo -e "${PURPLE}====================================================================${PLAIN}\n"
+
+    ask_append_nodes "[VLESS + WS 入口开启]" "$links_for_file"
+}
+
+# 快捷为 VLESS + WS 入站添加用户
+add_user_to_ws_flow() {
+    local cur_tag="$1"
+    prepare_link_context
+    echo -e "\n${PURPLE}--- 为 [${cur_tag}] 添加新用户 ---${PLAIN}"
+    read_username "ws-user" || return 1
+    local uname="$NEW_USERNAME"
+
+    local ucred
+    read -r -p " 请输入新用户 UUID (留空自动生成): " ucred
+    ucred="${ucred:-$(generate_uuid)}"
+
+    backup_config
+    local res
+    res=$(sb_py add "$cur_tag" "$uname" "$ucred" "$HOST_IP" "" 2>&1)
+    if [[ "$(head -n 1 <<< "$res")" != SUCCESS* ]]; then
+        restore_config
+        echo -e "${RED}[添加失败] ${res#ERROR: }${PLAIN}"
+        return 1
+    fi
+    commit_config || return 1
+
+    local new_link
+    new_link=$(grep '^LINK|'"$uname"'|' <<< "$res" | cut -d'|' -f3-)
+    echo -e "${GREEN}[成功] 已成功为 [${cur_tag}] 添加用户 [${uname}]！${PLAIN}"
+    if [[ -n "$new_link" ]]; then
+        echo -e " 专属分享链接:\n${WHITE}${new_link}${PLAIN}\n"
+        ask_append_nodes "[${cur_tag}] 新增用户: ${uname}" "${new_link}\n"
+    fi
+}
+
+# VLESS + WS 入口动态管理主菜单
+manage_vless_ws_menu() {
+    ensure_config_ready || return 1
+    prepare_link_context
+
+    while true; do
+        local ws_raw ws_status ws_tag ws_port ws_path ws_user_cnt
+        ws_raw=$(sb_py ws_info 2>/dev/null)
+        local status_line
+        status_line=$(head -n 1 <<< "$ws_raw")
+
+        echo -e "\n${PURPLE}====================================================${PLAIN}"
+        echo -e "${WHITE}          Sing-box VLESS + WS 入口动态管理          ${PLAIN}"
+        echo -e " 配置文件: ${CYAN}${CONFIG_FILE}${PLAIN}"
+
+        if [[ "$status_line" == ENABLED* ]]; then
+            IFS='|' read -r _ ws_tag ws_port ws_path ws_user_cnt <<< "$status_line"
+            echo -e " 当前状态: ${GREEN}● 已启用${PLAIN}"
+            echo -e " 入站标签: ${CYAN}${ws_tag}${PLAIN} | 监听端口: ${GREEN}${ws_port}${PLAIN}"
+            echo -e " WS 路径 : ${YELLOW}${ws_path}${PLAIN} | 现有用户数: ${WHITE}${ws_user_cnt}${PLAIN}"
+            echo -e "${PURPLE}====================================================${PLAIN}"
+            echo -e " ${GREEN}1.${PLAIN} 查看/导出 VLESS + WS 节点分享链接"
+            echo -e " ${GREEN}2.${PLAIN} 修改监听端口与 WS 路径 (无损保留所有现有用户)"
+            echo -e " ${GREEN}3.${PLAIN} 为 VLESS + WS 入站添加新用户"
+            echo -e " ${GREEN}4.${PLAIN} 关闭并安全移除 VLESS + WS 入口 (回滚保护)"
+            echo -e " ${GREEN}0.${PLAIN} 返回上一级菜单"
+            echo -e "${PURPLE}====================================================${PLAIN}"
+
+            local choice
+            read -r -p " 请输入选项 [0-4]: " choice || return 0
+            case "$choice" in
+                1)
+                    view_ws_links "$ws_tag"
+                    ;;
+                2)
+                    modify_ws_inbound "$ws_tag" "$ws_port" "$ws_path"
+                    ;;
+                3)
+                    add_user_to_ws_flow "$ws_tag"
+                    ;;
+                4)
+                    remove_ws_inbound "$ws_tag"
+                    ;;
+                0)
+                    return 0
+                    ;;
+                *)
+                    echo -e "${RED}[错误] 输入无效，请输入数字 0-4！${PLAIN}"
+                    ;;
+            esac
+        else
+            echo -e " 当前状态: ${YELLOW}○ 未启用${PLAIN} (当前配置中未包含 VLESS + WS 入站)"
+            echo -e "${PURPLE}====================================================${PLAIN}"
+            echo -e " ${GREEN}1.${PLAIN} 启用并添加 VLESS + WS 入口 (无损追加，不重置任何现有节点)"
+            echo -e " ${GREEN}0.${PLAIN} 返回上一级菜单"
+            echo -e "${PURPLE}====================================================${PLAIN}"
+
+            local choice
+            read -r -p " 请输入选项 [0-1]: " choice || return 0
+            case "$choice" in
+                1)
+                    enable_ws_inbound
+                    ;;
+                0)
+                    return 0
+                    ;;
+                *)
+                    echo -e "${RED}[错误] 输入无效，请输入数字 0-1！${PLAIN}"
+                    ;;
+            esac
+        fi
     done
 }
 
@@ -1546,7 +2047,7 @@ show_menu() {
     echo -e " ${GREEN}0.${PLAIN} 退出"
     echo -e "${PURPLE}====================================================${PLAIN}"
 
-    read -r -p " 请输入选项 [0-3]: " choice
+    read -r -p " 请输入选项 [0-3]: " choice || exit 0
     case "$choice" in
         1)
             generate_all_configurations
@@ -1581,7 +2082,7 @@ Sing-box 多协议配置文件生成与用户管理工具
   -g, --generate       直接执行配置生成 (可配合环境变量)
   -v, --view           查看已生成的默认节点分享链接
   -u, --users          直接进入入站用户管理菜单 (添加/删除/查看用户)
-  -u, --users          直接进入入站用户管理菜单 (添加/删除/查看用户)
+  -w, --ws             直接进入 VLESS + WS 入口动态管理 (开启/关闭/修改)
   -l, --list-users     直接列出当前所有入站及用户清单
   -t, --tag            为当前配置文件添加本脚本专属标注注释
   -h, --help           显示此帮助信息
@@ -1600,6 +2101,9 @@ Sing-box 多协议配置文件生成与用户管理工具
 
   # 直接进入用户管理 (添加/删除用户)
   ./sing-box.sh -u
+
+  # 直接管理 VLESS + WS 入口 (随时开启/关闭)
+  ./sing-box.sh -w
 
   # 快速查看当前配置中的所有用户
   ./sing-box.sh -l
@@ -1625,6 +2129,9 @@ main() {
             ;;
         -u|--users)
             manage_inbound_users_menu
+            ;;
+        -w|--ws)
+            manage_vless_ws_menu
             ;;
         -l|--list-users)
             list_all_inbounds_and_users
